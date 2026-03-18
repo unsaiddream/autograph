@@ -175,7 +175,7 @@ async def preview_document(
     else:
         all_zones = stored_zones
 
-    normalized = ensure_zones(all_zones, session.get("file_path"))
+    normalized = ensure_zones(all_zones, session.get("file_path"), pages_b64)
 
     # Pad if needed
     while len(normalized) < len(pages_b64):
@@ -243,7 +243,7 @@ async def export_document(
     else:
         all_zones = stored_zones
 
-    normalized = ensure_zones(all_zones, session.get("file_path"))
+    normalized = ensure_zones(all_zones, session.get("file_path"), pages_b64)
 
     while len(normalized) < len(pages_b64):
         normalized.append([])
