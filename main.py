@@ -23,6 +23,7 @@ from database import (
     update_session,
 )
 from document_processor import get_page_sizes_from_b64, process_upload
+from fallback_zones import ensure_zones
 from gemini_analyzer import analyze_all_pages
 from scan_effect import apply_scan_effect_all, pages_to_pdf
 from signature_overlay import overlay_all_pages
@@ -174,14 +175,7 @@ async def preview_document(
     else:
         all_zones = stored_zones
 
-    # Normalize: all_zones should be list of lists (one per page)
-    if all_zones and isinstance(all_zones[0], dict) and "zones" in all_zones[0]:
-        # Format: [{page: 1, zones: [...]}, ...]
-        normalized = [page_data.get("zones", []) for page_data in all_zones]
-    elif all_zones and isinstance(all_zones[0], list):
-        normalized = all_zones
-    else:
-        normalized = [[] for _ in pages_b64]
+    normalized = ensure_zones(all_zones, session.get("file_path"))
 
     # Pad if needed
     while len(normalized) < len(pages_b64):
@@ -249,13 +243,7 @@ async def export_document(
     else:
         all_zones = stored_zones
 
-    # Normalize zones
-    if all_zones and isinstance(all_zones[0], dict) and "zones" in all_zones[0]:
-        normalized = [page_data.get("zones", []) for page_data in all_zones]
-    elif all_zones and isinstance(all_zones[0], list):
-        normalized = all_zones
-    else:
-        normalized = [[] for _ in pages_b64]
+    normalized = ensure_zones(all_zones, session.get("file_path"))
 
     while len(normalized) < len(pages_b64):
         normalized.append([])
