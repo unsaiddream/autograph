@@ -1,6 +1,8 @@
 import json
+import logging
 import os
 import shutil
+import traceback
 from pathlib import Path
 
 import aiofiles
@@ -8,6 +10,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("autograph")
 
 load_dotenv()
 
@@ -23,6 +28,17 @@ from scan_effect import apply_scan_effect_all, pages_to_pdf
 from signature_overlay import overlay_all_pages
 
 app = FastAPI(title="Autograph", version="1.0.0")
+
+from fastapi import Request
+from fastapi.responses import JSONResponse as _JSONResponse
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s:\n%s", request.url, traceback.format_exc())
+    return _JSONResponse(
+        status_code=500,
+        content={"detail": f"{type(exc).__name__}: {exc}"},
+    )
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -93,9 +109,9 @@ async def upload_document(file: UploadFile = File(...)):
             "file_name": filename,
         }
     except Exception as e:
-        # Clean up on error
+        logger.error("Upload error:\n%s", traceback.format_exc())
         save_path.unlink(missing_ok=True)
-        raise HTTPException(500, f"Failed to process document: {str(e)}")
+        raise HTTPException(500, f"Failed to process document: {type(e).__name__}: {e}")
 
 
 @app.post("/analyze")
