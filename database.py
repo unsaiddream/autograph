@@ -1,101 +1,71 @@
-import sqlite_utils
-import sqlite3
+"""
+File-based session storage — each session is a JSON file in sessions/.
+No SQLite, no locking issues, works fine with uvicorn --reload.
+"""
 import json
-import threading
 import time
 import uuid
 from pathlib import Path
 
-DB_PATH = Path("autograph.db")
+SESSIONS_DIR = Path("sessions")
+SESSIONS_DIR.mkdir(exist_ok=True)
 SESSION_TTL = 86400  # 24 hours
 
-_lock = threading.Lock()
 
-
-def get_db() -> sqlite_utils.Database:
-    # Use a timeout so concurrent requests wait instead of immediately failing
-    conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
-    # WAL mode allows concurrent reads alongside a single writer
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    db = sqlite_utils.Database(conn)
-    _init_tables(db)
-    return db
-
-
-def _init_tables(db: sqlite_utils.Database):
-    if "sessions" not in db.table_names():
-        db["sessions"].create({
-            "id": str,
-            "created_at": float,
-            "updated_at": float,
-            "file_path": str,
-            "file_name": str,
-            "file_type": str,
-            "page_count": int,
-            "pages_b64": str,      # JSON list of base64 page images
-            "zones": str,          # JSON list of zone data per page
-            "signature_b64": str,  # base64 PNG
-            "stamp_b64": str,      # base64 PNG
-            "fullname": str,
-            "sign_date": str,
-        }, pk="id")
-
-    if "saved_signatures" not in db.table_names():
-        db["saved_signatures"].create({
-            "id": str,
-            "created_at": float,
-            "name": str,
-            "signature_b64": str,
-        }, pk="id")
+def _session_path(session_id: str) -> Path:
+    return SESSIONS_DIR / f"{session_id}.json"
 
 
 def create_session(file_path: str, file_name: str, file_type: str) -> str:
     session_id = str(uuid.uuid4())
     now = time.time()
-    with _lock:
-        db = get_db()
-        db["sessions"].insert({
-            "id": session_id,
-            "created_at": now,
-            "updated_at": now,
-            "file_path": file_path,
-            "file_name": file_name,
-            "file_type": file_type,
-            "page_count": 0,
-            "pages_b64": "[]",
-            "zones": "[]",
-            "signature_b64": None,
-            "stamp_b64": None,
-            "fullname": None,
-            "sign_date": None,
-        })
+    data = {
+        "id": session_id,
+        "created_at": now,
+        "updated_at": now,
+        "file_path": file_path,
+        "file_name": file_name,
+        "file_type": file_type,
+        "page_count": 0,
+        "pages_b64": "[]",
+        "zones": "[]",
+        "signature_b64": None,
+        "stamp_b64": None,
+        "fullname": None,
+        "sign_date": None,
+    }
+    _session_path(session_id).write_text(json.dumps(data))
     return session_id
 
 
 def get_session(session_id: str) -> dict | None:
-    db = get_db()
+    path = _session_path(session_id)
+    if not path.exists():
+        return None
     try:
-        row = db["sessions"].get(session_id)
-        return dict(row)
+        return json.loads(path.read_text())
     except Exception:
         return None
 
 
 def update_session(session_id: str, **kwargs):
+    session = get_session(session_id)
+    if session is None:
+        return
     kwargs["updated_at"] = time.time()
-    with _lock:
-        db = get_db()
-        db["sessions"].update(session_id, kwargs)
+    session.update(kwargs)
+    _session_path(session_id).write_text(json.dumps(session))
 
 
 def cleanup_old_sessions():
     cutoff = time.time() - SESSION_TTL
-    with _lock:
-        db = get_db()
-        old_sessions = list(db["sessions"].rows_where("created_at < ?", [cutoff]))
-        for session in old_sessions:
-            file_path = session.get("file_path")
-            if file_path and Path(file_path).exists():
-                Path(file_path).unlink(missing_ok=True)
-        db["sessions"].delete_where("created_at < ?", [cutoff])
+    for path in SESSIONS_DIR.glob("*.json"):
+        try:
+            data = json.loads(path.read_text())
+            if data.get("created_at", 0) < cutoff:
+                file_path = data.get("file_path")
+                if file_path:
+                    Path(file_path).unlink(missing_ok=True)
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
