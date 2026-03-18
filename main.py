@@ -283,12 +283,18 @@ async def export_document(
         stem = Path(original_name).stem
         download_name = f"{stem}_signed_scanned.pdf"
 
+        # RFC 5987 encoding for non-ASCII filenames (e.g. Cyrillic)
+        from urllib.parse import quote
+        encoded_name = quote(download_name, safe="")
+        content_disposition = (
+            f"attachment; filename=\"{download_name.encode('ascii', 'replace').decode()}\"; "
+            f"filename*=UTF-8''{encoded_name}"
+        )
+
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{download_name}"'
-            },
+            headers={"Content-Disposition": content_disposition},
         )
     except Exception as e:
         raise HTTPException(500, f"Export failed: {str(e)}")
