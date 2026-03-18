@@ -219,6 +219,10 @@ async def preview_document(
 async def export_document(
     session_id: str = Form(...),
     zones_override: str = Form(default=""),
+    signature_b64: str = Form(default=""),
+    stamp_b64: str = Form(default=""),
+    fullname: str = Form(default=""),
+    sign_date: str = Form(default=""),
 ):
     """
     Apply scan effect and export final PDF for download.
@@ -229,10 +233,12 @@ async def export_document(
 
     pages_b64 = json.loads(session["pages_b64"])
     stored_zones = json.loads(session["zones"] or "[]")
-    signature_b64 = session.get("signature_b64")
-    stamp_b64 = session.get("stamp_b64")
-    fullname = session.get("fullname")
-    sign_date = session.get("sign_date")
+
+    # Prefer form-submitted values; fall back to session
+    signature_b64 = signature_b64 or session.get("signature_b64") or None
+    stamp_b64 = stamp_b64 or session.get("stamp_b64") or None
+    fullname = fullname or session.get("fullname") or None
+    sign_date = sign_date or session.get("sign_date") or None
 
     # Use override zones if provided
     if zones_override:
