@@ -10,5 +10,4 @@ reportlab
 pikepdf
 pdfplumber
 aiofiles
-sqlite-utils
 python-dotenv
