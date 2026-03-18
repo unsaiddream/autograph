@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autograph — Document Signing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0A0A0A;
+    --card: #1A1A1A;
+    --card2: #222222;
+    --border: #2E2E2E;
+    --text: #E8E0D0;
+    --muted: #888880;
+    --gold: #C9A96E;
+    --gold-dim: #8A6E3E;
+    --blue: #3B82F6;
+    --green: #10B981;
+    --orange: #F59E0B;
+    --purple: #8B5CF6;
+    --danger: #EF4444;
+    --radius: 10px;
+    --transition: 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ─── Layout ─── */
+  .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 40px;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(10,10,10,0.85);
+    backdrop-filter: blur(12px);
+  }
+
+  .logo {
+    font-family: 'Instrument Serif', serif;
+    font-size: 26px;
+    color: var(--gold);
+    letter-spacing: -0.5px;
+  }
+  .logo span { color: var(--text); }
+
+  /* ─── Step Wizard ─── */
+  .steps {
+    display: flex;
+    gap: 0;
+    align-items: center;
+  }
+  .step-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: default;
+    opacity: 0.4;
+    transition: opacity 0.3s;
+  }
+  .step-item.active { opacity: 1; }
+  .step-item.done { opacity: 0.7; }
+  .step-num {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    border: 1.5px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    transition: all 0.3s;
+  }
+  .step-item.active .step-num {
+    border-color: var(--gold);
+    background: var(--gold);
+    color: var(--bg);
+  }
+  .step-item.done .step-num {
+    border-color: var(--green);
+    background: var(--green);
+    color: var(--bg);
+  }
+  .step-item.done .step-num::after { content: '✓'; font-size: 13px; }
+  .step-item.done .step-num span { display: none; }
+  .step-label { font-size: 12px; color: var(--muted); }
+  .step-item.active .step-label { color: var(--text); }
+  .step-sep { width: 32px; height: 1px; background: var(--border); margin: 0 4px; }
+
+  /* ─── Main Content Area ─── */
+  main {
+    flex: 1;
+    padding: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ─── Step Panels ─── */
+  .panel {
+    display: none;
+    animation: slideIn var(--transition) forwards;
+  }
+  .panel.active { display: block; }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(40px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  /* ─── Cards ─── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 20px;
+  }
+
+  h2 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 28px;
+    font-weight: 400;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+  h3 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 20px;
+    font-weight: 400;
+    margin-bottom: 16px;
+    color: var(--text);
+  }
+
+  .subtitle {
+    color: var(--muted);
+    margin-bottom: 28px;
+    font-size: 13px;
+  }
+
+  /* ─── Upload Zone ─── */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 60px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+  }
+  .upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--gold);
+    background: rgba(201, 169, 110, 0.04);
+  }
+  .upload-zone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+  .upload-icon { font-size: 48px; margin-bottom: 16px; }
+  .upload-text { font-family: 'Instrument Serif', serif; font-size: 20px; margin-bottom: 6px; }
+  .upload-hint { color: var(--muted); font-size: 12px; }
+
+  /* ─── Buttons ─── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: none;
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+  .btn-primary {
+    background: var(--gold);
+    color: var(--bg);
+    font-weight: 500;
+  }
+  .btn-primary:hover { background: #d4b47e; }
+  .btn-primary:disabled { background: var(--gold-dim); cursor: not-allowed; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid transparent;
+  }
+  .btn-danger:hover { border-color: var(--danger); }
+  .btn-sm { padding: 6px 12px; font-size: 12px; }
+
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 20px; }
+
+  /* ─── Canvas Area ─── */
+  .canvas-wrapper {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    display: inline-block;
+    position: relative;
+    background: #fff;
+  }
+  canvas { display: block; cursor: crosshair; }
+
+  .canvas-label {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  /* ─── Two-column layout ─── */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .cols { grid-template-columns: 1fr; } }
+
+  /* ─── Form fields ─── */
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  input[type="text"], input[type="date"] {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input[type="text"]:focus, input[type="date"]:focus { border-color: var(--gold); }
+
+  /* ─── Document Preview ─── */
+  .pages-container {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    align-items: center;
+  }
+
+  .page-wrapper {
+    position: relative;
+    display: inline-block;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    border-radius: 4px;
+    overflow: visible;
+  }
+
+  .page-img {
+    display: block;
+    max-width: 100%;
+    border-radius: 4px;
+  }
+
+  .page-num {
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+
+  /* Zone overlays */
+  .zone-overlay {
+    position: absolute;
+    border-radius: 3px;
+    cursor: move;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #fff;
+    font-family: 'DM Mono', monospace;
+    user-select: none;
+    transition: opacity 0.2s;
+  }
+  .zone-overlay:hover { opacity: 0.9 !important; }
+  .zone-overlay[data-type="signature"] { background: rgba(59,130,246,0.30); border: 1.5px solid rgba(59,130,246,0.6); }
+  .zone-overlay[data-type="stamp"]     { background: rgba(16,185,129,0.30); border: 1.5px solid rgba(16,185,129,0.6); }
+  .zone-overlay[data-type="fullname"]  { background: rgba(245,158,11,0.30); border: 1.5px solid rgba(245,158,11,0.6); }
+  .zone-overlay[data-type="date"]      { background: rgba(139,92,246,0.30); border: 1.5px solid rgba(139,92,246,0.6); }
+
+  /* ─── Loading / Scanning Animation ─── */
+  .scan-overlay {
+    position: fixed; inset: 0;
+    background: rgba(10,10,10,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+    display: none;
+  }
+  .scan-overlay.visible { display: flex; }
+  .scan-title {
+    font-family: 'Instrument Serif', serif;
+    font-size: 24px;
+    margin-bottom: 20px;
+    color: var(--gold);
+  }
+  .scan-bar-wrap {
+    width: 320px;
+    height: 200px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+    background: var(--card);
+  }
+  .scan-line {
+    position: absolute; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent);
+    top: 0;
+    animation: scanMove 1.5s ease-in-out infinite;
+    box-shadow: 0 0 20px var(--gold);
+  }
+  @keyframes scanMove {
+    0%   { top: 0; }
+    50%  { top: calc(100% - 3px); }
+    100% { top: 0; }
+  }
+  .scan-status { color: var(--muted); font-size: 13px; margin-top: 16px; }
+
+  /* ─── Progress bar ─── */
+  .progress-bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 12px 0;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--gold);
+    border-radius: 2px;
+    transition: width 0.5s ease;
+    width: 0%;
+  }
+
+  /* ─── Zone Legend ─── */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+    font-size: 12px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot {
+    width: 12px; height: 12px;
+    border-radius: 3px;
+  }
+
+  /* ─── Stamp upload ─── */
+  .stamp-upload-area {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    position: relative;
+  }
+  .stamp-upload-area:hover { border-color: var(--gold); }
+  .stamp-upload-area input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+
+  /* ─── Toast ─── */
+  #toast {
+    position: fixed;
+    bottom: 30px; right: 30px;
+    background: var(--card2);
+    border: 1px solid var(--border);
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    z-index: 1000;
+    max-width: 320px;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.error { border-color: var(--danger); color: var(--danger); }
+  #toast.success { border-color: var(--green); color: var(--green); }
+
+  /* ─── Analyze status ─── */
+  .analyze-notice {
+    padding: 14px 18px;
+    border-radius: 8px;
+    background: rgba(201,169,110,0.08);
+    border: 1px solid rgba(201,169,110,0.2);
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+
+  /* ─── Tabs ─── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab {
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .tab.active {
+    background: var(--card2);
+    border-color: var(--gold);
+    color: var(--text);
+  }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ─── Step 3 Export ─── */
+  .export-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 640px) { .export-grid { grid-template-columns: 1fr; } }
+
+  .preview-thumb {
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    object-fit: contain;
+    background: #fff;
+  }
+
+  .stat-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+  }
+  .stat-box dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .stat-box dd { font-size: 15px; margin-top: 2px; }
+
+  /* ─── Scrollbar ─── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ─── Header ─── -->
+<header>
+  <div class="logo">Auto<span>graph</span></div>
+  <div class="steps">
+    <div class="step-item active" id="step-indicator-1">
+      <div class="step-num"><span>1</span></div>
+      <div class="step-label">Upload</div>
+    </div>
+    <div class="step-sep"></div>
+    <div class="step-item" id="step-indicator-2">
+      <div class="step-num"><span>2</span></div>
+      <div class="step-label">Sign</div>
+    </div>
+    <div class="step-sep"></div>
+    <div class="step-item" id="step-indicator-3">
+      <div class="step-num"><span>3</span></div>
+      <div class="step-label">Export</div>
+    </div>
+  </div>
+  <div style="width:120px"></div>
+</header>
+
+<main>
+
+<!-- ═══════════════════ STEP 1: UPLOAD ═══════════════════ -->
+<div class="panel active" id="panel-1">
+  <h2>Upload your document</h2>
+  <p class="subtitle">PDF or DOCX — up to 50MB. Gemini Vision will detect signing zones automatically.</p>
+
+  <div class="card">
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept=".pdf,.docx,.doc">
+      <div class="upload-icon">📄</div>
+      <div class="upload-text">Drop file here or click to browse</div>
+      <div class="upload-hint">Supports PDF and DOCX · Max 50MB</div>
+    </div>
+
+    <div id="upload-status" style="display:none; margin-top:20px;">
+      <div class="progress-bar"><div class="progress-fill" id="upload-progress"></div></div>
+      <div id="upload-status-text" style="color:var(--muted);font-size:12px;margin-top:6px;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ STEP 2: SIGN ═══════════════════ -->
+<div class="panel" id="panel-2">
+  <h2>Place your signature</h2>
+  <p class="subtitle">Draw your signature and stamp, enter your name. Drag zones to reposition if needed.</p>
+
+  <div class="cols">
+    <!-- Left column: Drawing tools -->
+    <div>
+      <!-- Signature Canvas -->
+      <div class="card">
+        <h3>Signature</h3>
+        <div class="canvas-label">Draw with mouse or touch</div>
+        <div class="canvas-wrapper">
+          <canvas id="sig-canvas" width="380" height="140"></canvas>
+        </div>
+        <div class="actions">
+          <button class="btn btn-ghost btn-sm" onclick="undoStroke('sig')">↩ Undo</button>
+          <button class="btn btn-danger btn-sm" onclick="clearCanvas('sig')">✕ Clear</button>
+        </div>
+      </div>
+
+      <!-- Stamp -->
+      <div class="card">
+        <h3>Stamp</h3>
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab('stamp','draw')">Draw</button>
+          <button class="tab" onclick="switchTab('stamp','upload')">Upload PNG</button>
+        </div>
+
+        <div class="tab-panel active" id="stamp-tab-draw">
+          <div class="canvas-label">Draw freehand stamp</div>
+          <div class="canvas-wrapper">
+            <canvas id="stamp-canvas" width="200" height="200"></canvas>
+          </div>
+          <div class="actions">
+            <button class="btn btn-ghost btn-sm" onclick="undoStroke('stamp')">↩ Undo</button>
+            <button class="btn btn-danger btn-sm" onclick="clearCanvas('stamp')">✕ Clear</button>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="stamp-tab-upload">
+          <div class="stamp-upload-area" id="stamp-upload-area">
+            <input type="file" id="stamp-file" accept="image/png,image/jpeg,image/webp" onchange="handleStampUpload(event)">
+            <div>📷 Click to upload stamp image (PNG/JPG)</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Will be placed at stamp zones with 85% opacity</div>
+          </div>
+          <div id="stamp-preview" style="margin-top:12px;display:none;">
+            <img id="stamp-preview-img" style="max-width:160px;border-radius:6px;border:1px solid var(--border);" alt="Stamp preview">
+            <div class="actions">
+              <button class="btn btn-danger btn-sm" onclick="clearStampUpload()">✕ Remove</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Name & Date -->
+      <div class="card">
+        <h3>Name & Date</h3>
+        <div style="margin-bottom:14px;">
+          <label>Full Name (rendered in Caveat handwriting font)</label>
+          <input type="text" id="fullname-input" placeholder="Ivan Petrov" maxlength="80">
+          <div id="name-preview" style="margin-top:10px;padding:8px 12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-family:'Caveat',cursive;font-size:22px;color:rgb(15,25,100);min-height:40px;"></div>
+        </div>
+        <div>
+          <label>Signing Date</label>
+          <input type="date" id="date-input">
+        </div>
+      </div>
+    </div>
+
+    <!-- Right column: Document preview -->
+    <div>
+      <div class="card">
+        <h3>Document Preview</h3>
+
+        <!-- Zone legend -->
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:rgba(59,130,246,0.5)"></div>Signature</div>
+          <div class="legend-item"><div class="legend-dot" style="background:rgba(16,185,129,0.5)"></div>Stamp</div>
+          <div class="legend-item"><div class="legend-dot" style="background:rgba(245,158,11,0.5)"></div>Name</div>
+          <div class="legend-item"><div class="legend-dot" style="background:rgba(139,92,246,0.5)"></div>Date</div>
+        </div>
+
+        <div id="analyze-notice" class="analyze-notice" style="display:none;">
+          ⚡ Detecting signing zones with Gemini Vision...
+          <div class="progress-bar" style="margin-top:8px;"><div class="progress-fill" id="analyze-progress" style="width:0%"></div></div>
+        </div>
+
+        <div id="analyze-done" style="display:none;margin-bottom:12px;font-size:12px;color:var(--green);">
+          ✓ Zones detected — drag to reposition
+        </div>
+
+        <div id="no-zones-notice" style="display:none;margin-bottom:12px;font-size:12px;color:var(--muted);">
+          No zones detected automatically. You can proceed without zones.
+        </div>
+
+        <div class="pages-container" id="pages-container"></div>
+      </div>
+
+      <div class="actions" style="justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="goStep(1)">← Back</button>
+        <button class="btn btn-ghost" id="btn-preview" onclick="generatePreview()" disabled>↺ Preview</button>
+        <button class="btn btn-primary" id="btn-to-export" onclick="goStep(3)" disabled>
+          Continue to Export →
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ STEP 3: EXPORT ═══════════════════ -->
+<div class="panel" id="panel-3">
+  <h2>Export scanned document</h2>
+  <p class="subtitle">Review the final preview, then download your signed + scanned PDF.</p>
+
+  <div class="export-grid">
+    <div>
+      <div class="card">
+        <h3>Document Info</h3>
+        <dl>
+          <div class="stat-box">
+            <dt>File name</dt>
+            <dd id="exp-filename">—</dd>
+          </div>
+          <div class="stat-box">
+            <dt>Pages</dt>
+            <dd id="exp-pages">—</dd>
+          </div>
+          <div class="stat-box">
+            <dt>Signer</dt>
+            <dd id="exp-signer">—</dd>
+          </div>
+          <div class="stat-box">
+            <dt>Date</dt>
+            <dd id="exp-date">—</dd>
+          </div>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>Scan Effect</h3>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">Medium intensity — mimics a real CamScanner scan.</p>
+        <ul style="color:var(--muted);font-size:12px;list-style:none;display:flex;flex-direction:column;gap:6px;">
+          <li>✓ Warm paper tone (#FFFBEB blend)</li>
+          <li>✓ Gaussian noise (std=6)</li>
+          <li>✓ Random micro-rotation (±0.8°)</li>
+          <li>✓ Vignette (edges darkened 15%)</li>
+          <li>✓ Uneven lighting (right side −7%)</li>
+          <li>✓ Slight blur + contrast boost</li>
+        </ul>
+      </div>
+
+      <div class="actions" style="flex-direction:column;align-items:stretch;">
+        <button class="btn btn-ghost" onclick="goStep(2)" style="justify-content:center;">← Back to Sign</button>
+        <button class="btn btn-primary" id="btn-export" onclick="exportDocument()" style="justify-content:center;padding:14px 20px;font-size:15px;">
+          ⬇ Download Scanned PDF
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h3>Preview Pages</h3>
+        <div id="export-pages" class="pages-container" style="gap:12px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<!-- ─── Scan Overlay ─── -->
+<div class="scan-overlay" id="scan-overlay">
+  <div class="scan-title">Scanning document...</div>
+  <div class="scan-bar-wrap">
+    <div class="scan-line"></div>
+    <div style="padding:20px;color:var(--muted);font-size:12px;text-align:center;margin-top:80px;">
+      Applying scan effects and building PDF
+    </div>
+  </div>
+  <div class="scan-status" id="scan-status-text">Please wait...</div>
+</div>
+
+<!-- ─── Toast ─── -->
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+const state = {
+  sessionId: null,
+  currentStep: 1,
+  pageCount: 0,
+  pagesB64: [],
+  pageSizes: [],
+  zonesPerPage: [],   // [{page, zones:[{id,type,x,y,width,height,label}]}]
+  uploadedFileName: '',
+  stampMode: 'draw',  // 'draw' | 'upload'
+  stampUploadB64: null,
+  previewDone: false,
+};
+
+// ═══════════════════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════════════════
+let toastTimer;
+function showToast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = ''; }, 4000);
+}
+
+// ═══════════════════════════════════════════════════════════
+// STEP NAVIGATION
+// ═══════════════════════════════════════════════════════════
+function goStep(n) {
+  if (n === 3 && !state.sessionId) { showToast('Upload a document first', 'error'); return; }
+
+  // Update panel
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(`panel-${n}`).classList.add('active');
+
+  // Update indicators
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById(`step-indicator-${i}`);
+    el.classList.remove('active', 'done');
+    if (i < n) el.classList.add('done');
+    else if (i === n) el.classList.add('active');
+  }
+
+  state.currentStep = n;
+
+  if (n === 3) updateExportInfo();
+}
+
+// ═══════════════════════════════════════════════════════════
+// FILE UPLOAD
+// ═══════════════════════════════════════════════════════════
+const uploadZone = document.getElementById('upload-zone');
+const fileInput  = document.getElementById('file-input');
+
+uploadZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  uploadZone.classList.add('dragover');
+});
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) doUpload(file);
+});
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) doUpload(e.target.files[0]);
+});
+
+async function doUpload(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['pdf','docx','doc'].includes(ext)) {
+    showToast('Only PDF and DOCX files are supported', 'error');
+    return;
+  }
+
+  const statusDiv = document.getElementById('upload-status');
+  const statusText = document.getElementById('upload-status-text');
+  const progressFill = document.getElementById('upload-progress');
+
+  statusDiv.style.display = 'block';
+  statusText.textContent = `Uploading ${file.name}...`;
+  progressFill.style.width = '20%';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    progressFill.style.width = '50%';
+    const res = await fetch('/upload', { method: 'POST', body: formData });
+    progressFill.style.width = '80%';
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Upload failed');
+    }
+
+    const data = await res.json();
+    progressFill.style.width = '100%';
+    statusText.textContent = `✓ ${data.page_count} page(s) loaded`;
+
+    state.sessionId = data.session_id;
+    state.pageCount = data.page_count;
+    state.pagesB64 = data.pages;
+    state.pageSizes = data.sizes;
+    state.uploadedFileName = data.file_name;
+
+    // Small delay then go to step 2
+    setTimeout(() => {
+      goStep(2);
+      renderPagePreviews();
+      startAnalysis();
+    }, 600);
+
+  } catch (err) {
+    progressFill.style.width = '0%';
+    statusText.textContent = `✗ ${err.message}`;
+    showToast(err.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// GEMINI ANALYSIS
+// ═══════════════════════════════════════════════════════════
+async function startAnalysis() {
+  const notice = document.getElementById('analyze-notice');
+  const done = document.getElementById('analyze-done');
+  const noZones = document.getElementById('no-zones-notice');
+  const progress = document.getElementById('analyze-progress');
+
+  notice.style.display = 'block';
+  done.style.display = 'none';
+  noZones.style.display = 'none';
+
+  // Animate progress
+  let p = 0;
+  const interval = setInterval(() => {
+    p = Math.min(p + 2, 85);
+    progress.style.width = p + '%';
+  }, 200);
+
+  try {
+    const formData = new FormData();
+    formData.append('session_id', state.sessionId);
+
+    const res = await fetch('/analyze', { method: 'POST', body: formData });
+
+    clearInterval(interval);
+    progress.style.width = '100%';
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Analysis failed');
+    }
+
+    const data = await res.json();
+    state.zonesPerPage = data.zones_per_page;
+
+    // Count total zones
+    const totalZones = state.zonesPerPage.reduce((acc, p) => acc + (p.zones?.length || 0), 0);
+
+    notice.style.display = 'none';
+
+    if (totalZones === 0) {
+      noZones.style.display = 'block';
+    } else {
+      done.style.display = 'block';
+    }
+
+    // Render zones on preview
+    renderZoneOverlays();
+
+    // Enable buttons
+    document.getElementById('btn-preview').disabled = false;
+    document.getElementById('btn-to-export').disabled = false;
+
+  } catch (err) {
+    clearInterval(interval);
+    notice.style.display = 'none';
+    showToast(`Gemini: ${err.message}`, 'error');
+    // Still allow proceeding without zones
+    document.getElementById('btn-preview').disabled = false;
+    document.getElementById('btn-to-export').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// PAGE PREVIEW RENDERING
+// ═══════════════════════════════════════════════════════════
+function renderPagePreviews() {
+  const container = document.getElementById('pages-container');
+  container.innerHTML = '';
+
+  state.pagesB64.forEach((b64, i) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'page-wrapper';
+    wrapper.id = `page-wrapper-${i}`;
+
+    const img = document.createElement('img');
+    img.className = 'page-img';
+    img.src = `data:image/png;base64,${b64}`;
+    img.style.maxWidth = '100%';
+    img.dataset.pageIdx = i;
+
+    wrapper.appendChild(img);
+
+    const numEl = document.createElement('div');
+    numEl.className = 'page-num';
+    numEl.textContent = `Page ${i + 1}`;
+    wrapper.appendChild(numEl);
+
+    container.appendChild(wrapper);
+  });
+}
+
+function renderZoneOverlays() {
+  // Remove existing overlays
+  document.querySelectorAll('.zone-overlay').forEach(el => el.remove());
+
+  if (!state.zonesPerPage || state.zonesPerPage.length === 0) return;
+
+  state.zonesPerPage.forEach((pageData, pageIdx) => {
+    const zones = pageData.zones || [];
+    const wrapper = document.getElementById(`page-wrapper-${pageIdx}`);
+    if (!wrapper) return;
+
+    const img = wrapper.querySelector('img');
+    if (!img) return;
+
+    // Scale factor: rendered image vs actual pixel size
+    const [origW, origH] = state.pageSizes[pageIdx] || [1, 1];
+    const displayW = img.offsetWidth || img.naturalWidth;
+    const scaleX = displayW / origW;
+    const scaleY = scaleX; // uniform scaling
+
+    zones.forEach(zone => {
+      const overlay = document.createElement('div');
+      overlay.className = 'zone-overlay';
+      overlay.dataset.type = zone.type;
+      overlay.dataset.pageIdx = pageIdx;
+      overlay.dataset.zoneId = zone.id;
+
+      overlay.style.left   = (zone.x * scaleX) + 'px';
+      overlay.style.top    = (zone.y * scaleY) + 'px';
+      overlay.style.width  = (zone.width * scaleX) + 'px';
+      overlay.style.height = (zone.height * scaleY) + 'px';
+
+      overlay.title = `${zone.type}: ${zone.label || ''} (${Math.round(zone.confidence * 100)}%)`;
+
+      makeDraggable(overlay, pageIdx, zone.id, origW, origH, displayW);
+      wrapper.appendChild(overlay);
+    });
+  });
+}
+
+function makeDraggable(el, pageIdx, zoneId, origW, origH, displayW) {
+  let startX, startY, startLeft, startTop;
+
+  el.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = parseInt(el.style.left) || 0;
+    startTop  = parseInt(el.style.top)  || 0;
+
+    const onMove = e => {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      el.style.left = (startLeft + dx) + 'px';
+      el.style.top  = (startTop  + dy) + 'px';
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+
+      // Update zone coordinates in state
+      const img = document.getElementById(`page-wrapper-${pageIdx}`).querySelector('img');
+      const scaleX = (img.offsetWidth || displayW) / origW;
+      const newX = Math.round(parseInt(el.style.left) / scaleX);
+      const newY = Math.round(parseInt(el.style.top) / scaleX);
+
+      const pageData = state.zonesPerPage[pageIdx];
+      if (pageData) {
+        const zone = pageData.zones.find(z => z.id === zoneId);
+        if (zone) { zone.x = newX; zone.y = newY; }
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// Re-render zones after images load (to get correct offsetWidth)
+window.addEventListener('load', () => {
+  if (state.zonesPerPage.length > 0) renderZoneOverlays();
+});
+
+// ═══════════════════════════════════════════════════════════
+// SIGNATURE CANVAS
+// ═══════════════════════════════════════════════════════════
+const sigCanvas = document.getElementById('sig-canvas');
+const sigCtx = sigCanvas.getContext('2d');
+sigCtx.strokeStyle = '#111';
+sigCtx.lineWidth = 2;
+sigCtx.lineCap = 'round';
+sigCtx.lineJoin = 'round';
+
+const stampCanvas = document.getElementById('stamp-canvas');
+const stampCtx = stampCanvas.getContext('2d');
+stampCtx.strokeStyle = '#111';
+stampCtx.lineWidth = 2;
+stampCtx.lineCap = 'round';
+stampCtx.lineJoin = 'round';
+
+function setupCanvas(canvas, ctx) {
+  let drawing = false;
+  let strokes = [];
+  let currentStroke = [];
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches) {
+      return {
+        x: e.touches[0].clientX - rect.left,
+        y: e.touches[0].clientY - rect.top,
+      };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function draw(e) {
+    if (!drawing) return;
+    const pos = getPos(e);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    currentStroke.push(pos);
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    drawing = true;
+    currentStroke = [];
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    currentStroke.push(pos);
+  });
+  canvas.addEventListener('mousemove', draw);
+  canvas.addEventListener('mouseup', () => {
+    if (drawing) { strokes.push([...currentStroke]); drawing = false; }
+  });
+  canvas.addEventListener('mouseleave', () => {
+    if (drawing) { strokes.push([...currentStroke]); drawing = false; }
+  });
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    drawing = true;
+    currentStroke = [];
+    const pos = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(pos.x, pos.y);
+    currentStroke.push(pos);
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => { e.preventDefault(); draw(e); }, { passive: false });
+  canvas.addEventListener('touchend', () => {
+    if (drawing) { strokes.push([...currentStroke]); drawing = false; }
+  });
+
+  canvas._strokes = strokes;
+  canvas._undoStroke = () => {
+    if (strokes.length === 0) return;
+    strokes.pop();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    strokes.forEach(stroke => {
+      if (stroke.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(stroke[0].x, stroke[0].y);
+      stroke.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.stroke();
+    });
+  };
+}
+
+setupCanvas(sigCanvas, sigCtx);
+setupCanvas(stampCanvas, stampCtx);
+
+function undoStroke(which) {
+  const canvas = which === 'sig' ? sigCanvas : stampCanvas;
+  canvas._undoStroke();
+}
+
+function clearCanvas(which) {
+  const canvas = which === 'sig' ? sigCanvas : stampCanvas;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  canvas._strokes = [];
+}
+
+function canvasToB64(canvas) {
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+// ═══════════════════════════════════════════════════════════
+// STAMP TAB SWITCH
+// ═══════════════════════════════════════════════════════════
+function switchTab(group, tab) {
+  document.querySelectorAll(`[id^="${group}-tab-"]`).forEach(p => p.classList.remove('active'));
+  document.getElementById(`${group}-tab-${tab}`).classList.add('active');
+
+  // Update tab buttons
+  event.target.closest('.tabs').querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+
+  state.stampMode = tab;
+}
+
+function handleStampUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const b64 = ev.target.result.split(',')[1];
+    state.stampUploadB64 = b64;
+    const img = document.getElementById('stamp-preview-img');
+    img.src = ev.target.result;
+    document.getElementById('stamp-preview').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearStampUpload() {
+  state.stampUploadB64 = null;
+  document.getElementById('stamp-preview').style.display = 'none';
+  document.getElementById('stamp-file').value = '';
+}
+
+// Name live preview
+document.getElementById('fullname-input').addEventListener('input', e => {
+  document.getElementById('name-preview').textContent = e.target.value;
+});
+
+// ═══════════════════════════════════════════════════════════
+// PREVIEW GENERATION
+// ═══════════════════════════════════════════════════════════
+async function generatePreview() {
+  const btn = document.getElementById('btn-preview');
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const sigB64 = canvasToB64(sigCanvas);
+    const stampB64 = state.stampMode === 'upload' && state.stampUploadB64
+      ? state.stampUploadB64
+      : canvasToB64(stampCanvas);
+    const fullname = document.getElementById('fullname-input').value.trim();
+    const signDate = document.getElementById('date-input').value;
+
+    const formData = new FormData();
+    formData.append('session_id', state.sessionId);
+    formData.append('signature_b64', sigB64);
+    formData.append('stamp_b64', stampB64);
+    formData.append('fullname', fullname);
+    formData.append('sign_date', signDate);
+    formData.append('zones_override', JSON.stringify(state.zonesPerPage));
+
+    const res = await fetch('/preview', { method: 'POST', body: formData });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Preview failed');
+    }
+
+    const data = await res.json();
+    state.previewPages = data.pages;
+    state.previewDone = true;
+
+    // Update page previews
+    data.pages.forEach((b64, i) => {
+      const img = document.getElementById(`page-wrapper-${i}`)?.querySelector('img');
+      if (img) {
+        img.src = `data:image/png;base64,${b64}`;
+      }
+    });
+
+    showToast('Preview updated', 'success');
+
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↺ Preview';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORT INFO UPDATE
+// ═══════════════════════════════════════════════════════════
+function updateExportInfo() {
+  document.getElementById('exp-filename').textContent = state.uploadedFileName || '—';
+  document.getElementById('exp-pages').textContent = state.pageCount || '—';
+  document.getElementById('exp-signer').textContent = document.getElementById('fullname-input').value || '—';
+  document.getElementById('exp-date').textContent = document.getElementById('date-input').value || '—';
+
+  // Populate export preview thumbnails
+  const container = document.getElementById('export-pages');
+  container.innerHTML = '';
+
+  const pages = state.previewPages || state.pagesB64;
+  pages.forEach((b64, i) => {
+    const img = document.createElement('img');
+    img.className = 'preview-thumb';
+    img.src = `data:image/png;base64,${b64}`;
+    img.alt = `Page ${i + 1}`;
+    container.appendChild(img);
+
+    const label = document.createElement('div');
+    label.className = 'page-num';
+    label.textContent = `Page ${i + 1}`;
+    container.appendChild(label);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════════════
+async function exportDocument() {
+  const btn = document.getElementById('btn-export');
+  const overlay = document.getElementById('scan-overlay');
+  const statusText = document.getElementById('scan-status-text');
+
+  btn.disabled = true;
+  overlay.classList.add('visible');
+
+  const steps = [
+    'Overlaying signatures...',
+    'Applying warm paper tone...',
+    'Adding Gaussian noise...',
+    'Simulating scan rotation...',
+    'Adding vignette effect...',
+    'Adjusting brightness...',
+    'Final contrast boost...',
+    'Building PDF...',
+  ];
+  let stepIdx = 0;
+  const stepInterval = setInterval(() => {
+    if (stepIdx < steps.length) {
+      statusText.textContent = steps[stepIdx++];
+    }
+  }, 800);
+
+  try {
+    const formData = new FormData();
+    formData.append('session_id', state.sessionId);
+    formData.append('zones_override', JSON.stringify(state.zonesPerPage));
+
+    const res = await fetch('/export', { method: 'POST', body: formData });
+
+    clearInterval(stepInterval);
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Export failed');
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const filename = state.uploadedFileName
+      ? state.uploadedFileName.replace(/\.[^.]+$/, '') + '_signed_scanned.pdf'
+      : 'document_signed_scanned.pdf';
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    showToast('PDF downloaded!', 'success');
+
+  } catch (err) {
+    clearInterval(stepInterval);
+    showToast(err.message, 'error');
+  } finally {
+    overlay.classList.remove('visible');
+    btn.disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// RESPONSIVE: re-render zones when window resizes
+// ═══════════════════════════════════════════════════════════
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (state.zonesPerPage.length > 0) renderZoneOverlays();
+  }, 200);
+});
+</script>
+</body>
+</html>
