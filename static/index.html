@@ -794,11 +794,23 @@ async function doUpload(file) {
     progressFill.style.width = '80%';
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Upload failed');
+      let errMsg = `Upload failed (HTTP ${res.status})`;
+      try {
+        const err = await res.json();
+        errMsg = err.detail || errMsg;
+      } catch {
+        const txt = await res.text().catch(() => '');
+        if (txt) errMsg = txt.slice(0, 200);
+      }
+      throw new Error(errMsg);
     }
 
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('Server returned invalid response');
+    }
     progressFill.style.width = '100%';
     statusText.textContent = `✓ ${data.page_count} page(s) loaded`;
 
@@ -852,8 +864,9 @@ async function startAnalysis() {
     progress.style.width = '100%';
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Analysis failed');
+      let errMsg = `Analysis failed (HTTP ${res.status})`;
+      try { const e = await res.json(); errMsg = e.detail || errMsg; } catch {}
+      throw new Error(errMsg);
     }
 
     const data = await res.json();
@@ -1167,8 +1180,9 @@ async function generatePreview() {
 
     const res = await fetch('/preview', { method: 'POST', body: formData });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Preview failed');
+      let errMsg = `Preview failed (HTTP ${res.status})`;
+      try { const e = await res.json(); errMsg = e.detail || errMsg; } catch {}
+      throw new Error(errMsg);
     }
 
     const data = await res.json();
@@ -1259,8 +1273,9 @@ async function exportDocument() {
     clearInterval(stepInterval);
 
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Export failed');
+      let errMsg = `Export failed (HTTP ${res.status})`;
+      try { const e = await res.json(); errMsg = e.detail || errMsg; } catch {}
+      throw new Error(errMsg);
     }
 
     const blob = await res.blob();
