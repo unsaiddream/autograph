@@ -9,11 +9,14 @@ Keywords searched (case-insensitive, parentheses optional):
   stamp     : печать, м.п., stamp, l.s., мөр
 """
 
+import logging
 import re
 from pathlib import Path
 from typing import Optional
 
 import fitz  # PyMuPDF
+
+_log = logging.getLogger("autograph.fallback")
 
 # DPI used when rendering page images in document_processor.py
 RENDER_DPI = 150
@@ -58,6 +61,10 @@ def detect_zones_from_pdf(pdf_path: str) -> list[dict]:
         ph = page.rect.height  # points
         zones: list[dict] = []
         sig_count = name_count = date_count = stamp_count = 0
+
+        # Log all text on the page so we can diagnose keyword misses
+        all_text = page.get_text("text")
+        _log.info("FALLBACK page %d text (first 400 chars): %r", page_num + 1, all_text[:400])
 
         # get_text("rawdict") gives per-span info with bbox
         raw = page.get_text("rawdict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
@@ -160,12 +167,19 @@ def ensure_zones(
         return normalized
 
     # No zones at all — try fallback
-    if not pdf_path or not Path(pdf_path).exists():
+    if not pdf_path:
+        _log.warning("ensure_zones: no pdf_path provided, cannot run fallback")
+        return normalized
+    if not Path(pdf_path).exists():
+        _log.warning("ensure_zones: pdf_path %r does not exist (already deleted?)", pdf_path)
         return normalized
 
+    _log.info("ensure_zones: running PDF fallback detector on %r", pdf_path)
     try:
         fallback = detect_zones_from_pdf(pdf_path)
         fb_normalized = [p.get("zones", []) for p in fallback]
+        _log.info("ensure_zones: fallback found zones_per_page=%s", [len(z) for z in fb_normalized])
         return fb_normalized
-    except Exception:
+    except Exception as exc:
+        _log.error("ensure_zones: fallback failed: %s", exc, exc_info=True)
         return normalized
