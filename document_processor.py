@@ -72,7 +72,16 @@ def _docx_to_pdf_fallback(docx_path: str, output_path: str) -> str:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.enums import TA_LEFT
 
-    doc_obj = DocxDocument(docx_path)
+    try:
+        doc_obj = DocxDocument(docx_path)
+    except Exception as e:
+        ext = Path(docx_path).suffix.lower()
+        if ext == ".doc":
+            raise ValueError(
+                "Legacy .doc format is not supported without LibreOffice. "
+                "Please convert your file to .docx and re-upload."
+            ) from e
+        raise ValueError(f"Could not open Word document: {e}") from e
     pdf_doc = SimpleDocTemplate(
         output_path,
         pagesize=A4,
@@ -115,7 +124,7 @@ def process_upload(file_path: str, file_type: str, session_id: str) -> tuple[lis
     elif file_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
-    ) or file_path.lower().endswith(".docx"):
+    ) or file_path.lower().endswith(".docx") or file_path.lower().endswith(".doc"):
         pdf_path = str(Path(file_path).with_suffix(".pdf"))
         pdf_path = docx_to_pdf(file_path, pdf_path)
         return pdf_to_images(pdf_path)
