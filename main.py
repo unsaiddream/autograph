@@ -260,6 +260,15 @@ async def export_document(
     while len(normalized) < len(pages_b64):
         normalized.append([])
 
+    logger.info(
+        "EXPORT: fullname=%r sign_date=%r has_sig=%s has_stamp=%s "
+        "pages=%d zones_per_page=%s",
+        fullname, sign_date,
+        bool(signature_b64), bool(stamp_b64),
+        len(pages_b64),
+        [len(z) for z in normalized],
+    )
+
     try:
         # Step 1: Overlay signatures
         overlaid = overlay_all_pages(
