@@ -288,17 +288,22 @@ def ensure_zones(
     _log.info("ensure_zones: no stored zones — running fallbacks")
 
     # ── Strategy 1: PDF text ──────────────────────────────────────────────────
-    if pdf_path and Path(pdf_path).exists():
-        try:
-            result = _detect_from_pdf_text(pdf_path)
-            if any(z for z in result):
-                _log.info("ensure_zones: PDF text → %s zones", [len(z) for z in result])
-                return result
-            _log.info("ensure_zones: PDF text yielded no zones (image-only PDF?)")
-        except Exception as exc:
-            _log.error("ensure_zones: PDF text failed: %s", exc)
-    else:
-        _log.warning("ensure_zones: PDF not available (%r)", pdf_path)
+    if pdf_path:
+        # For .doc/.docx, a converted PDF lives at the same path with .pdf ext
+        candidate = Path(pdf_path)
+        if candidate.suffix.lower() in (".doc", ".docx"):
+            candidate = candidate.with_suffix(".pdf")
+        if candidate.exists():
+            try:
+                result = _detect_from_pdf_text(str(candidate))
+                if any(z for z in result):
+                    _log.info("ensure_zones: PDF text → %s zones", [len(z) for z in result])
+                    return result
+                _log.info("ensure_zones: PDF text yielded no zones (image-only PDF?)")
+            except Exception as exc:
+                _log.error("ensure_zones: PDF text failed: %s", exc)
+        else:
+            _log.warning("ensure_zones: PDF not available (%s)", candidate)
 
     # ── Strategy 2: image line detection ─────────────────────────────────────
     if pages_b64:
