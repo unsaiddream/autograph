@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+google-generativeai
+pymupdf
+python-docx
+Pillow
+opencv-python
+reportlab
+pikepdf
+pdfplumber
+aiofiles
+sqlite-utils
+python-dotenv
