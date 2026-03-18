@@ -1,5 +1,7 @@
 import sqlite_utils
+import sqlite3
 import json
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -7,9 +9,16 @@ from pathlib import Path
 DB_PATH = Path("autograph.db")
 SESSION_TTL = 86400  # 24 hours
 
+_lock = threading.Lock()
 
-def get_db():
-    db = sqlite_utils.Database(DB_PATH)
+
+def get_db() -> sqlite_utils.Database:
+    # Use a timeout so concurrent requests wait instead of immediately failing
+    conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
+    # WAL mode allows concurrent reads alongside a single writer
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    db = sqlite_utils.Database(conn)
     _init_tables(db)
     return db
 
@@ -42,24 +51,25 @@ def _init_tables(db: sqlite_utils.Database):
 
 
 def create_session(file_path: str, file_name: str, file_type: str) -> str:
-    db = get_db()
     session_id = str(uuid.uuid4())
     now = time.time()
-    db["sessions"].insert({
-        "id": session_id,
-        "created_at": now,
-        "updated_at": now,
-        "file_path": file_path,
-        "file_name": file_name,
-        "file_type": file_type,
-        "page_count": 0,
-        "pages_b64": "[]",
-        "zones": "[]",
-        "signature_b64": None,
-        "stamp_b64": None,
-        "fullname": None,
-        "sign_date": None,
-    })
+    with _lock:
+        db = get_db()
+        db["sessions"].insert({
+            "id": session_id,
+            "created_at": now,
+            "updated_at": now,
+            "file_path": file_path,
+            "file_name": file_name,
+            "file_type": file_type,
+            "page_count": 0,
+            "pages_b64": "[]",
+            "zones": "[]",
+            "signature_b64": None,
+            "stamp_b64": None,
+            "fullname": None,
+            "sign_date": None,
+        })
     return session_id
 
 
@@ -73,17 +83,19 @@ def get_session(session_id: str) -> dict | None:
 
 
 def update_session(session_id: str, **kwargs):
-    db = get_db()
     kwargs["updated_at"] = time.time()
-    db["sessions"].update(session_id, kwargs)
+    with _lock:
+        db = get_db()
+        db["sessions"].update(session_id, kwargs)
 
 
 def cleanup_old_sessions():
-    db = get_db()
     cutoff = time.time() - SESSION_TTL
-    old_sessions = list(db["sessions"].rows_where("created_at < ?", [cutoff]))
-    for session in old_sessions:
-        file_path = session.get("file_path")
-        if file_path and Path(file_path).exists():
-            Path(file_path).unlink(missing_ok=True)
-    db["sessions"].delete_where("created_at < ?", [cutoff])
+    with _lock:
+        db = get_db()
+        old_sessions = list(db["sessions"].rows_where("created_at < ?", [cutoff]))
+        for session in old_sessions:
+            file_path = session.get("file_path")
+            if file_path and Path(file_path).exists():
+                Path(file_path).unlink(missing_ok=True)
+        db["sessions"].delete_where("created_at < ?", [cutoff])
