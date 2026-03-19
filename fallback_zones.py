@@ -74,14 +74,26 @@ def _zone(zid: str, ztype: str, label: str,
 # ── Strategy 1: PyMuPDF text extraction ──────────────────────────────────────
 
 def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
-    """Return [[zones_page0], ...] using PDF text spans."""
+    """
+    Return [[zones_page0], ...] using PDF text lines (not individual spans).
+
+    Processing at LINE level prevents "(фио, подпись)" from being split across
+    spans, which could cause the manager's label to be misidentified as the
+    applicant's signature zone.
+
+    Applicant zones are restricted to the upper 78% of the page — zones below
+    that threshold belong to the manager / "Согласовано" section and are skipped.
+    Only the FIRST (topmost) signature zone is kept; duplicates are discarded.
+    """
     doc = fitz.open(pdf_path)
     results: list[list[dict]] = []
 
     for page_num, page in enumerate(doc):
         pw = page.rect.width
+        ph = page.rect.height
         zones: list[dict] = []
         sig_n = name_n = date_n = stamp_n = 0
+        found_signature = False   # keep only the topmost signature zone
 
         plain = page.get_text("text")
         _log.info("PDF text page %d (first 600 chars): %r", page_num + 1, plain[:600])
@@ -91,60 +103,84 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
             if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    raw_text = span.get("text", "").strip()
-                    if not raw_text:
-                        continue
-                    text = unicodedata.normalize("NFKC", raw_text)
+                # Merge ALL spans in this line → full line text
+                all_spans = line.get("spans", [])
+                if not all_spans:
+                    continue
 
-                    x0, y0, x1, y1 = span["bbox"]
-                    sw, sh = x1 - x0, y1 - y0
-                    if sh <= 0:
-                        sh = span.get("size", 10)
+                full_text = " ".join(s.get("text", "") for s in all_spans).strip()
+                if not full_text:
+                    continue
 
-                    # Skip manager combined labels like "(фио, подпись)"
-                    if _COMBINED_RE.search(text):
-                        _log.debug("Skipping combined manager label: %r", raw_text)
-                        continue
+                text = unicodedata.normalize("NFKC", full_text)
 
-                    # ---- Signature (applicant only) --------------------------
-                    # Accept "(подпись)" but reject if it also contains name words
-                    if _SIG_RE.search(text) and not _NAME_RE.search(text):
-                        sig_n += 1
-                        zh = max(sh * 2.5, 12)
-                        zw = max(sw * 2.0, pw * 0.25)
-                        zy = max(y0 - zh - sh * 0.5, 0)
-                        zones.append(_zone(f"sign_{sig_n}", "signature", raw_text,
-                                           _px(x0), _px(zy), _px(zw), _px(zh)))
-                        _log.info("  → signature zone at y=%.0f from %r", _px(zy), raw_text)
+                # Line bounding box (union of all spans)
+                x0 = min(s["bbox"][0] for s in all_spans)
+                y0 = min(s["bbox"][1] for s in all_spans)
+                x1 = max(s["bbox"][2] for s in all_spans)
+                y1 = max(s["bbox"][3] for s in all_spans)
+                sw, sh = x1 - x0, y1 - y0
+                if sh <= 0:
+                    sh = all_spans[0].get("size", 10)
 
-                    # ---- Full name -------------------------------------------
-                    elif _NAME_RE.search(text):
-                        name_n += 1
-                        zh = max(sh * 1.8, 10)
-                        zw = max(sw * 2.2, pw * 0.35)
-                        zy = max(y0 - zh - sh * 0.3, 0)
-                        zones.append(_zone(f"name_{name_n}", "fullname", raw_text,
-                                           _px(x0), _px(zy), _px(zw), _px(zh)))
-                        _log.info("  → fullname zone at y=%.0f from %r", _px(zy), raw_text)
+                y_frac = y0 / ph if ph > 0 else 0
 
-                    # ---- Date ------------------------------------------------
-                    elif _DATE_RE.search(text):
-                        date_n += 1
-                        zh = max(sh * 1.5, 10)
-                        zw = max(sw * 2.5, pw * 0.22)
-                        zy = max(y0 - zh * 0.5, 0)
-                        zones.append(_zone(f"date_{date_n}", "date", raw_text,
-                                           _px(x0), _px(zy), _px(zw), _px(zh)))
+                _log.debug("  line y_frac=%.2f: %r", y_frac, text[:80])
 
-                    # ---- Stamp -----------------------------------------------
-                    elif _STAMP_RE.search(text):
-                        stamp_n += 1
-                        side = max(sh * 4, pw * 0.15)
-                        zx = max(x0 - side * 0.2, 0)
-                        zy = max(y0 - side * 0.5, 0)
-                        zones.append(_zone(f"stamp_{stamp_n}", "stamp", raw_text,
-                                           _px(zx), _px(zy), _px(side), _px(side)))
+                # Skip manager / Согласовано section (lower 22% of page)
+                if y_frac > 0.78:
+                    _log.debug("    → skipped (manager section y_frac=%.2f)", y_frac)
+                    continue
+
+                # Skip combined manager labels: "(фио, подпись)", "(дата, подпись)" etc.
+                if _COMBINED_RE.search(text):
+                    _log.debug("    → skipped combined label: %r", full_text)
+                    continue
+
+                # ---- Signature (applicant only) --------------------------
+                # Require signature keyword AND no name keyword in the same line
+                # AND only keep the first (topmost) signature zone found
+                if _SIG_RE.search(text) and not _NAME_RE.search(text) and not found_signature:
+                    found_signature = True
+                    sig_n += 1
+                    zh = max(sh * 1.6, 12)
+                    zw = max(sw * 2.2, pw * 0.28)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"sign_{sig_n}", "signature", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → signature zone y=%.1f (y_frac=%.2f) from %r",
+                              _px(zy), y_frac, full_text)
+
+                # ---- Full name -------------------------------------------
+                elif _NAME_RE.search(text):
+                    name_n += 1
+                    zh = max(sh * 1.8, 10)
+                    zw = max(sw * 2.2, pw * 0.38)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"name_{name_n}", "fullname", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → fullname zone y=%.1f (y_frac=%.2f) from %r",
+                              _px(zy), y_frac, full_text)
+
+                # ---- Date ------------------------------------------------
+                elif _DATE_RE.search(text):
+                    date_n += 1
+                    zh = max(sh * 1.5, 10)
+                    zw = max(sw * 2.5, pw * 0.22)
+                    zy = max(y0 - zh * 0.5, 0)
+                    zones.append(_zone(f"date_{date_n}", "date", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → date zone y=%.1f from %r", _px(zy), full_text)
+
+                # ---- Stamp -----------------------------------------------
+                elif _STAMP_RE.search(text):
+                    stamp_n += 1
+                    side = max(sh * 4, pw * 0.15)
+                    zx = max(x0 - side * 0.2, 0)
+                    zy = max(y0 - side * 0.5, 0)
+                    zones.append(_zone(f"stamp_{stamp_n}", "stamp", full_text,
+                                       _px(zx), _px(zy), _px(side), _px(side)))
+                    _log.info("  → stamp zone y=%.1f from %r", _px(zy), full_text)
 
         _log.info("PDF text page %d: found %d zones", page_num + 1, len(zones))
         results.append(zones)
@@ -284,6 +320,52 @@ def _default_zones(pages_b64: list[str]) -> list[list[dict]]:
     return all_zones
 
 
+# ── Zone validation ──────────────────────────────────────────────────────────
+
+def _validate_zones(
+    all_zones: list[list[dict]],
+    pages_b64: list[str],
+) -> list[list[dict]]:
+    """
+    Remove zones that are clearly mis-placed:
+    - 'stamp' or 'signature' zones in the lower 22% of the page (manager section)
+    - Only keep the FIRST signature zone per page (applicant's zone)
+    """
+    result = []
+    for page_idx, zones in enumerate(all_zones):
+        if page_idx < len(pages_b64):
+            try:
+                img_data = base64.b64decode(pages_b64[page_idx])
+                pil_img = Image.open(BytesIO(img_data))
+                page_h = pil_img.height
+            except Exception:
+                page_h = 0
+        else:
+            page_h = 0
+
+        clean: list[dict] = []
+        seen_signature = False
+        for z in zones:
+            ztype = z.get("type", "")
+            zy = z.get("y", 0)
+            y_frac = zy / page_h if page_h > 0 else 0
+
+            if ztype in ("stamp", "signature") and y_frac > 0.78:
+                _log.info("  validate: removed %s zone at y_frac=%.2f", ztype, y_frac)
+                continue
+
+            if ztype == "signature":
+                if seen_signature:
+                    _log.info("  validate: removed duplicate signature zone at y_frac=%.2f", y_frac)
+                    continue
+                seen_signature = True
+
+            clean.append(z)
+
+        result.append(clean)
+    return result
+
+
 # ── Public entry point ────────────────────────────────────────────────────────
 
 def ensure_zones(
@@ -305,6 +387,14 @@ def ensure_zones(
 
     if sum(len(z) for z in normalized) > 0:
         _log.info("ensure_zones: using stored Gemini zones %s", [len(z) for z in normalized])
+        # Validate stored zones: remove stamp/signature zones in the manager
+        # section (y_frac > 78%) — Gemini sometimes mis-classifies those.
+        if pages_b64:
+            cleaned = _validate_zones(normalized, pages_b64)
+            if cleaned != normalized:
+                _log.info("ensure_zones: cleaned Gemini zones %s → %s",
+                          [len(z) for z in normalized], [len(z) for z in cleaned])
+            return cleaned
         return normalized
 
     _log.info("ensure_zones: no stored zones — running fallbacks")
