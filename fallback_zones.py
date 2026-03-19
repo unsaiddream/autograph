@@ -28,30 +28,39 @@ RENDER_DPI = 150
 _SCALE = RENDER_DPI / 72.0          # PDF points → image pixels
 
 # ── keyword regexes ──────────────────────────────────────────────────────────
-# Applied after Unicode NFKC normalisation on each text span.
 
-# Matches the APPLICANT's signature label only.
-# Excluded: "(фио, подпись)" or "(дата, подпись)" — those are manager labels.
-_SIG_ONLY_RE   = re.compile(r"^[\(\s]*подпись[\)\s]*$", re.IGNORECASE)
-_SIG_RE        = re.compile(r"подпись|signature|підпис|қолы", re.IGNORECASE)
+# Pure signature label: "(подпись)"
+_SIG_RE = re.compile(r"подпись|signature|підпис|қолы", re.IGNORECASE)
 
-# "(фамилия)", "(имя, отчество полностью)", "ФИО" etc.
-_NAME_RE  = re.compile(
-    r"фамилия|имя.*отчество|отчество.*имя|fullname|аты.жөні|^фио$",
+# Surname-only field: "(фамилия)"
+_SURNAME_RE = re.compile(r"фамилия", re.IGNORECASE)
+
+# First-name + patronymic field: "(имя, отчество полностью)"
+_FIRSTNAME_RE = re.compile(r"имя.*отчество|отчество.*имя", re.IGNORECASE)
+
+# Full-name field — generic ФИО / fullname (NOT the combined "фио, подпись")
+_FULLNAME_RE = re.compile(r"^[\(\s]*фио[\)\s]*$|fullname|аты.жөні", re.IGNORECASE)
+
+# Union — any name keyword
+_NAME_RE = re.compile(
+    r"фамилия|имя.*отчество|отчество.*имя|fullname|аты.жөні|^[\(\s]*фио[\)\s]*$",
     re.IGNORECASE,
 )
 
-# Date labels (standalone "дата" / "date" words)
-_DATE_RE  = re.compile(r"^\W*дата\W*$|^\W*date\W*$|күні", re.IGNORECASE)
+# "(фио, подпись)" / "(ФИО, подпись)" — dual field: name LEFT of /, signature RIGHT
+_FIO_SIG_RE = re.compile(r"фио.{0,15}подпись|fullname.{0,15}sign", re.IGNORECASE)
+
+# Bad combos that are neither purely name nor the handled fио/подпись form
+_BAD_COMBINED_RE = re.compile(
+    r"(имя|фамилия).{0,10}(подпись)|(подпись).{0,10}(имя|фамилия)",
+    re.IGNORECASE,
+)
+
+# Date labels
+_DATE_RE = re.compile(r"^\W*дата\W*$|^\W*date\W*$|күні", re.IGNORECASE)
 
 # Stamp labels
 _STAMP_RE = re.compile(r"печать|м\.п\.|stamp|l\.s\.|мөр", re.IGNORECASE)
-
-# Combined manager labels that should NOT get applicant zones
-_COMBINED_RE = re.compile(
-    r"(фио|имя|фамилия).{0,10}(подпись)|(подпись).{0,10}(фио|имя|фамилия)",
-    re.IGNORECASE,
-)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -77,13 +86,17 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
     """
     Return [[zones_page0], ...] using PDF text lines (not individual spans).
 
-    Processing at LINE level prevents "(фио, подпись)" from being split across
-    spans, which could cause the manager's label to be misidentified as the
-    applicant's signature zone.
+    Zone types produced:
+      "surname"   — write only the first word of fullname (фамилия field)
+      "firstname" — write words 2+ of fullname (имя, отчество field)
+      "fullname"  — write the whole name
+      "signature" — place the signature image
+      "date"      — write the date in Russian format
+      "stamp"     — place the stamp image
 
-    Applicant zones are restricted to the upper 78% of the page — zones below
-    that threshold belong to the manager / "Согласовано" section and are skipped.
-    Only the FIRST (topmost) signature zone is kept; duplicates are discarded.
+    Special handling for "(фио, подпись)": creates a fullname zone (left of /)
+    AND a signature zone (right of /) on the same line — works for both
+    applicant and manager sections.
     """
     doc = fitz.open(pdf_path)
     results: list[list[dict]] = []
@@ -93,7 +106,7 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
         ph = page.rect.height
         zones: list[dict] = []
         sig_n = name_n = date_n = stamp_n = 0
-        found_signature = False   # keep only the topmost signature zone
+        found_sig_only = False   # only the first pure-signature zone per page
 
         plain = page.get_text("text")
         _log.info("PDF text page %d (first 600 chars): %r", page_num + 1, plain[:600])
@@ -103,7 +116,6 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
             if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
-                # Merge ALL spans in this line → full line text
                 all_spans = line.get("spans", [])
                 if not all_spans:
                     continue
@@ -114,7 +126,6 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
 
                 text = unicodedata.normalize("NFKC", full_text)
 
-                # Line bounding box (union of all spans)
                 x0 = min(s["bbox"][0] for s in all_spans)
                 y0 = min(s["bbox"][1] for s in all_spans)
                 x1 = max(s["bbox"][2] for s in all_spans)
@@ -124,55 +135,95 @@ def _detect_from_pdf_text(pdf_path: str) -> list[list[dict]]:
                     sh = all_spans[0].get("size", 10)
 
                 y_frac = y0 / ph if ph > 0 else 0
-
                 _log.debug("  line y_frac=%.2f: %r", y_frac, text[:80])
 
-                # Skip manager / Согласовано section (lower 22% of page)
-                if y_frac > 0.78:
-                    _log.debug("    → skipped (manager section y_frac=%.2f)", y_frac)
-                    continue
-
-                # Skip combined manager labels: "(фио, подпись)", "(дата, подпись)" etc.
-                if _COMBINED_RE.search(text):
-                    _log.debug("    → skipped combined label: %r", full_text)
-                    continue
-
-                # ---- Signature (applicant only) --------------------------
-                # Require signature keyword AND no name keyword in the same line
-                # AND only keep the first (topmost) signature zone found
-                if _SIG_RE.search(text) and not _NAME_RE.search(text) and not found_signature:
-                    found_signature = True
-                    sig_n += 1
+                # ── (фио, подпись) ─────────────────────────────────────────
+                # Dual zone: fullname LEFT of "/", signature RIGHT of "/"
+                # Allowed at any y position (applicant AND manager sections)
+                if _FIO_SIG_RE.search(text):
                     zh = max(sh * 1.6, 12)
-                    zw = max(sw * 2.2, pw * 0.28)
                     zy = max(y0 - zh - sh * 0.3, 0)
-                    zones.append(_zone(f"sign_{sig_n}", "signature", full_text,
-                                       _px(x0), _px(zy), _px(zw), _px(zh)))
-                    _log.info("  → signature zone y=%.1f (y_frac=%.2f) from %r",
-                              _px(zy), y_frac, full_text)
-
-                # ---- Full name -------------------------------------------
-                elif _NAME_RE.search(text):
+                    # FIO zone: left half of the label span
                     name_n += 1
-                    zh = max(sh * 1.8, 10)
-                    zw = max(sw * 2.2, pw * 0.38)
-                    zy = max(y0 - zh - sh * 0.3, 0)
+                    fio_w = max(sw * 0.48, pw * 0.25)
                     zones.append(_zone(f"name_{name_n}", "fullname", full_text,
-                                       _px(x0), _px(zy), _px(zw), _px(zh)))
-                    _log.info("  → fullname zone y=%.1f (y_frac=%.2f) from %r",
+                                       _px(x0), _px(zy), _px(fio_w), _px(zh)))
+                    _log.info("  → fio zone (fullname) y=%.1f y_frac=%.2f from %r",
                               _px(zy), y_frac, full_text)
+                    # Signature zone: right half (after notional "/" position)
+                    sig_n += 1
+                    sig_x = x0 + fio_w + pw * 0.04   # small gap for "/"
+                    sig_w = max(sw * 0.44, pw * 0.22)
+                    zones.append(_zone(f"sign_{sig_n}", "signature", full_text,
+                                       _px(sig_x), _px(zy), _px(sig_w), _px(zh)))
+                    _log.info("  → fio zone (signature) y=%.1f from %r",
+                              _px(zy), full_text)
+                    continue
 
-                # ---- Date ------------------------------------------------
-                elif _DATE_RE.search(text):
+                # ── Skip other bad-combined labels ─────────────────────────
+                if _BAD_COMBINED_RE.search(text):
+                    _log.debug("    → skipped bad-combined: %r", full_text)
+                    continue
+
+                # ── Date — allowed at any y ────────────────────────────────
+                if _DATE_RE.search(text):
                     date_n += 1
                     zh = max(sh * 1.5, 10)
                     zw = max(sw * 2.5, pw * 0.22)
                     zy = max(y0 - zh * 0.5, 0)
                     zones.append(_zone(f"date_{date_n}", "date", full_text,
                                        _px(x0), _px(zy), _px(zw), _px(zh)))
-                    _log.info("  → date zone y=%.1f from %r", _px(zy), full_text)
+                    _log.info("  → date zone y=%.1f y_frac=%.2f from %r",
+                              _px(zy), y_frac, full_text)
+                    continue
 
-                # ---- Stamp -----------------------------------------------
+                # ── Skip manager section for single-purpose labels ─────────
+                if y_frac > 0.78:
+                    _log.debug("    → skipped (manager section y_frac=%.2f)", y_frac)
+                    continue
+
+                # ── Surname-only field: (фамилия) ──────────────────────────
+                if _SURNAME_RE.search(text) and not _SIG_RE.search(text):
+                    name_n += 1
+                    zh = max(sh * 1.8, 10)
+                    zw = max(sw * 2.2, pw * 0.38)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"name_{name_n}", "surname", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → surname zone y=%.1f from %r", _px(zy), full_text)
+
+                # ── First-name + patronymic: (имя, отчество полностью) ─────
+                elif _FIRSTNAME_RE.search(text) and not _SIG_RE.search(text):
+                    name_n += 1
+                    zh = max(sh * 1.8, 10)
+                    zw = max(sw * 2.2, pw * 0.38)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"name_{name_n}", "firstname", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → firstname zone y=%.1f from %r", _px(zy), full_text)
+
+                # ── Generic full-name field ────────────────────────────────
+                elif _FULLNAME_RE.search(text) and not _SIG_RE.search(text):
+                    name_n += 1
+                    zh = max(sh * 1.8, 10)
+                    zw = max(sw * 2.2, pw * 0.38)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"name_{name_n}", "fullname", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → fullname zone y=%.1f from %r", _px(zy), full_text)
+
+                # ── Pure signature: (подпись) — first occurrence only ──────
+                elif _SIG_RE.search(text) and not _NAME_RE.search(text) and not found_sig_only:
+                    found_sig_only = True
+                    sig_n += 1
+                    zh = max(sh * 1.6, 12)
+                    zw = max(sw * 2.2, pw * 0.28)
+                    zy = max(y0 - zh - sh * 0.3, 0)
+                    zones.append(_zone(f"sign_{sig_n}", "signature", full_text,
+                                       _px(x0), _px(zy), _px(zw), _px(zh)))
+                    _log.info("  → signature zone y=%.1f from %r", _px(zy), full_text)
+
+                # ── Stamp ──────────────────────────────────────────────────
                 elif _STAMP_RE.search(text):
                     stamp_n += 1
                     side = max(sh * 4, pw * 0.15)

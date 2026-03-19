@@ -11,6 +11,31 @@ FONT_PATH = Path("fonts/Caveat-Regular.ttf")
 NAME_COLOR = (15, 25, 100)  # Dark blue ballpoint pen
 NAME_PADDING = 8  # px from left edge
 
+_MONTHS_RU = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+
+def _format_date_ru(date_str: str) -> str:
+    """Convert YYYY-MM-DD to Russian format: '2 марта 2026 г.'"""
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(date_str.strip(), "%Y-%m-%d")
+        return f"{dt.day} {_MONTHS_RU[dt.month - 1]} {dt.year} г."
+    except Exception:
+        return date_str
+
+
+def _name_for_zone(fullname: str, zone_type: str) -> str:
+    """Return the portion of fullname appropriate for the zone type."""
+    parts = fullname.split()
+    if zone_type == "surname":
+        return parts[0] if parts else fullname
+    if zone_type == "firstname":
+        return " ".join(parts[1:]) if len(parts) > 1 else fullname
+    return fullname  # "fullname" or anything else
+
 
 def _load_image_from_b64(b64: str) -> Image.Image:
     data = base64.b64decode(b64)
@@ -81,33 +106,31 @@ def _place_stamp(page: Image.Image, stamp_b64: str, zone: dict) -> Image.Image:
 
 
 def _render_name(fullname: str, zone: dict, sign_date: str | None = None) -> Image.Image:
-    """Render handwritten-style name onto a transparent image."""
+    """Render handwritten-style name/date onto a transparent image."""
+    zone_type = zone.get("type", "fullname")
     zone_w = int(zone["width"])
     zone_h = int(zone["height"])
 
-    # Font size: 65% of zone height
-    font_size = max(10, int(zone_h * 0.65))
+    if zone_type == "date":
+        text = _format_date_ru(sign_date) if sign_date else ""
+    else:
+        text = _name_for_zone(fullname, zone_type)
 
+    if not text:
+        return Image.new("RGBA", (zone_w, zone_h), (0, 0, 0, 0))
+
+    font_size = max(10, int(zone_h * 0.65))
     try:
         font = ImageFont.truetype(str(FONT_PATH), font_size)
     except Exception:
         font = ImageFont.load_default()
 
-    # Create transparent canvas
     canvas = Image.new("RGBA", (zone_w, zone_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(canvas)
-
-    text = fullname
-    if sign_date and zone.get("type") == "date":
-        text = sign_date
-
     draw.text((NAME_PADDING, (zone_h - font_size) // 2), text, font=font, fill=(*NAME_COLOR, 220))
 
-    # Random tilt
     tilt = random.uniform(-2, 2)
     canvas = _rotate_image(canvas, tilt)
-
-    # Crop back to zone size (rotation may expand)
     canvas = canvas.crop((0, 0, zone_w, zone_h))
     return canvas
 
@@ -146,13 +169,11 @@ def overlay_page(
         elif zone_type == "stamp" and stamp_b64:
             page = _place_stamp(page, stamp_b64, zone)
 
-        elif zone_type == "fullname" and fullname:
+        elif zone_type in ("fullname", "surname", "firstname") and fullname:
             page = _place_name(page, fullname, zone)
 
-        elif zone_type == "date":
-            date_text = sign_date or ""
-            if date_text:
-                page = _place_name(page, date_text, zone, sign_date)
+        elif zone_type == "date" and sign_date:
+            page = _place_name(page, sign_date, zone, sign_date)
 
     # Convert to RGB for final output
     result = Image.new("RGB", page.size, (255, 255, 255))
